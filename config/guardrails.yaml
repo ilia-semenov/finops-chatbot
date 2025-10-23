@@ -1,0 +1,55 @@
+version: 1
+policies:
+  - name: pii-redaction
+    applies_to: ["ingestion", "generation"]
+    description: Remove or mask direct identifiers before storage or response.
+    detectors:
+      - type: aws_comprehend_pii
+        action: redact
+      - type: regex
+        pattern: "(?i)(api[_-]?key|secret|password|token)"
+        action: block
+  - name: member-access-control
+    applies_to: ["retrieval"]
+    description: Prevent member-only content from leaving the service without authentication.
+    conditions:
+      - attribute: user.role
+        operator: in
+        values: ["finops_member", "finops_internal", "finops_confidential"]
+      - attribute: document.access_tier
+        operator: <=
+        compare_with: user.clearance_level
+    fallback: refusal_template_member
+  - name: confidential-escalation
+    applies_to: ["generation"]
+    description: Require explicit justification and manager approval before referencing confidential sources.
+    conditions:
+      - attribute: request.requires_confidential
+        operator: equals
+        value: true
+      - attribute: approval.ticket_id
+        operator: exists
+    action: allow
+    else_action: block
+  - name: hallucination-check
+    applies_to: ["generation"]
+    description: Ensure answer is grounded in retrieved context.
+    detectors:
+      - type: llm_grounding
+        provider: bedrock_contextual_grounding
+        threshold: 0.7
+        action: block_on_failure
+  - name: policy_refusal
+    applies_to: ["user_input"]
+    description: Reject requests outside scope (cloud cost optimization for specific company, personal data requests, etc.).
+    detectors:
+      - type: keyword
+        keywords:
+          - "help me hack"
+          - "give me credentials"
+          - "share confidential"
+          - "predict earnings"
+        action: refuse
+refusals:
+  refusal_template_member: |
+    I’m sorry, I can’t share that. This information is reserved for FinOps Foundation members. If you believe you should have access, please sign in with a member account or contact support@finops.org.
